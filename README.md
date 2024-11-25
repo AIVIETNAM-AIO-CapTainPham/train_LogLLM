@@ -48,7 +48,6 @@ typeface.
 ```
    ├── Meta-Llama-3-8B
    │ ├── config.json
-   │ ├── configuration.json
    │ ├── generation_config.json
    │ ├── LICENSE
    │ ├── model-00001-of-00004.safetensors
