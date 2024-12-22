@@ -198,10 +198,11 @@ class LogLLM(nn.Module):
 
     def train_helper(self, sequences_, labels):
         '''
-        :param sequences_: list of list :[seq, seq, seq]  , seq:[item, item]
+        :param sequences: list of list: [seq, seq, ...,seq]  , seq:[item, ..., item]
         :param labels:  list of labels, label is one of ['anomalous', 'normal']
-        :return: Llama_output[label_mask]   , target_tokens_ids[target_tokens_atts]
+        :return: Llama_output[label_mask], target_tokens_ids[target_tokens_atts]
         '''
+
         sequences = [sequence[:self.max_seq_len] for sequence in sequences_]
 
         batch_size = len(sequences)
@@ -261,6 +262,11 @@ class LogLLM(nn.Module):
         return Llama_output[label_mask], target_tokens_ids[target_tokens_atts]
 
     def forward(self, sequences_):
+        '''
+        :param sequences: list of list: [seq, seq, ...,seq]  , seq:[item, ..., item]
+        :return: Generated answer (token id).
+        '''
+
         sequences = [sequence[:self.max_seq_len] for sequence in sequences_]
 
         batch_size = len(sequences)
