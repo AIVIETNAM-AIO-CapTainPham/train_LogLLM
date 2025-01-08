@@ -132,7 +132,7 @@ def log_to_dataframe(log_file, regex, headers, start_line, end_line):
                     # print(e)
                     pass
 
-    print("Total size after encoding is", linecount, cnt)
+    print("Total size is {}; Total size after encoding is {}".format(linecount, cnt))
     logdf = pd.DataFrame(log_messages, columns=headers)
     return logdf
 
