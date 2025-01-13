@@ -97,8 +97,9 @@ def trainModel(model, dataset, micro_batch_size, gradient_accumulation_steps, n_
     print(f'scheduler_step: {scheduler_step}')
 
     steps = 0
-    total_acc, total_acc_count, total_count, train_loss = 0, 0, 0, 0
     for epoch in range(int(n_epochs)):
+        total_acc, total_acc_count, total_count, train_loss = 0, 0, 0, 0
+
         # 自定义的dataloader
         random.shuffle(indexes)   # 打乱顺序
         end = len(indexes) + 1
