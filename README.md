@@ -1,6 +1,6 @@
 # LogLLM: Log-based Anomaly Detection Using Large Language Models #
 
-Official Implementation of "[LogLLM: Log-based Anomaly Detection Using Large Language Models](https://arxiv.org/abs/2411.08561)"
+Official Implementation of "LogLLM: Log-based Anomaly Detection Using Large Language Models"
 ![framework.png](framework.png)
 
 ## Datasets
