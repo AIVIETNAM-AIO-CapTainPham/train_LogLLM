@@ -1,6 +1,6 @@
 ---
 library_name: peft
-base_model: /home/lenovo/gw/LLM_model/Meta-Llama-3-8B
+base_model: /mnt/public/gw/LLM_model/Meta-Llama-3-8B
 ---
 
 # Model Card for Model ID

@@ -153,8 +153,8 @@ class LogLLM(nn.Module):
         Llama_ft_path = os.path.join(path,'Llama_ft')
         Bert_ft_path = os.path.join(path,'Bert_ft')
         projector_path = os.path.join(path,'projector.pt')
-        self.Llama_model.save_pretrained(Llama_ft_path)
-        self.Bert_model.save_pretrained(Bert_ft_path)
+        self.Llama_model.save_pretrained(Llama_ft_path, safe_serialization = True)
+        self.Bert_model.save_pretrained(Bert_ft_path, safe_serialization =True)
         torch.save(self.projector.state_dict(), projector_path)
 
 

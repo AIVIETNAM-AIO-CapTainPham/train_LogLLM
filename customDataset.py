@@ -2,10 +2,39 @@ import numpy as np
 import pandas as pd
 from torch.utils.data import Dataset
 import re
+
+# patterns = [
+#     r'[a-zA-Z0-9]*:*([/\\]+[^/\\\s]+)+[/\\]*',  # 文件路径
+#     r'[a-zA-Z\.\:\-\_]*\d[a-zA-Z0-9\.\:\-\_]*',  # 中间一定要有数字  数字和字母和 . 或 : 或 - 的组合
+#     # r'[a-zA-Z0-9]+\.[a-zA-Z0-9]+',
+# ]
+#
+# # 合并所有模式
+# combined_pattern = '|'.join(patterns)
+#
+# # 替换函数
+# def replace_patterns(text):
+#     return re.sub(combined_pattern, '<*>', text)
+
+
+
 patterns = [
-    r'[a-zA-Z0-9]*:*([/\\]+[^/\\\s]+)+[/\\]*',  # 文件路径
-    r'[a-zA-Z\.\:\-\_]*\d[a-zA-Z0-9\.\:\-\_]*',  # 中间一定要有数字  数字和字母和 . 或 : 或 - 的组合
-    # r'[a-zA-Z0-9]+\.[a-zA-Z0-9]+',
+    r'True',
+    r'true',
+    r'False',
+    r'false',
+    r'\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion)\b',
+    r'\b(Mon|Monday|Tue|Tuesday|Wed|Wednesday|Thu|Thursday|Fri|Friday|Sat|Saturday|Sun|Sunday)\b',
+    r'\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(\d{1,2})\s+\b',
+    r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d{1,5})?', #  IP
+    r'([0-9A-Fa-f]{2}:){11}[0-9A-Fa-f]{2}',   # Special MAC
+    r'([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}',   # MAC
+    r'[a-zA-Z0-9]*[:\.]*([/\\]+[^/\\\s\[\]]+)+[/\\]*',  # File Path
+    r'\b[0-9a-fA-F]{8}\b',
+    r'\b[0-9a-fA-F]{10}\b',
+    r'(\w+[\w\.]*)@(\w+[\w\.]*)\-(\w+[\w\.]*)',
+    r'(\w+[\w\.]*)@(\w+[\w\.]*)',
+    r'[a-zA-Z\.\:\-\_]*\d[a-zA-Z0-9\.\:\-\_]*',  # word have number
 ]
 
 # 合并所有模式
@@ -13,7 +42,9 @@ combined_pattern = '|'.join(patterns)
 
 # 替换函数
 def replace_patterns(text):
-    return re.sub(combined_pattern, '<*>', text)
+    text = re.sub(r'[\.]{3,}', '.. ', text)    # Replace multiple '.' with '.. '
+    text = re.sub(combined_pattern, '<*>', text)
+    return text
 
 
 class CustomDataset(Dataset):
