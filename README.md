@@ -34,111 +34,200 @@ typeface.
 |   RAPID    |    &#10008;    | **1.000** |   0.859   |   0.924   | **0.874** |   0.399   |   0.548   |   0.911   |   0.611   |   0.732   |    0.200    |    0.207    |    0.203    |    0.602    |
 |   LogLLM   |    &#10008;    |   0.994   | **1.000** | **0.997** |   0.861   |   0.979   | **0.916** | **0.992** |   0.926   | **0.958** |  **0.966**  |    0.966    |  **0.966**  |  **0.959**  |
 
-## Using Our Code to Reproduce the Results
-### 1. Set Up the Environment.
-- **Software Requirements**:
-  - Python: 3.8.20
-  - CUDA: 12.1
+---
 
-- **Choose one of the following methods to install dependencies**:
- 
---- Option 1: Install from ```requirements.txt```
-```
- conda install --yes --file requirements.txt # You may need to downgrade the torch using pip to match the CUDA version
+## Setup
+
+You can manage dependencies with either **uv** (recommended — faster, lockfile-based, used in this fork) or **conda** (original method from the paper). Pick one.
+
+### Option 1 — uv (recommended)
+
+```bash
+# 1. Install uv (one-time)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# 2. Sync the environment (creates .venv from pyproject.toml + uv.lock)
+uv sync
 ```
 
---- Option 2: Install packages individually
+Then prefix any Python command with `uv run`:
+```bash
+uv run python train.py
 ```
+
+### Option 2 — conda (original)
+
+Requirements from the paper: Python 3.8.20, CUDA 12.1.
+
+```bash
 conda create -n logllm python=3.8
-pip install torch==2.4.0 torchvision==0.19.0 torchaudio==2.4.0 --index-url https://download.pytorch.org/whl/cu121
-pip install transformers datasets peft accelerate bitsandbytes safetensors
-pip install scikit-learn
-pip install tqdm
+conda activate logllm
+pip install torch==2.4.0 torchvision==0.19.0 torchaudio==2.4.0 \
+    --index-url https://download.pytorch.org/whl/cu121
+pip install transformers datasets peft accelerate bitsandbytes \
+    safetensors scikit-learn tqdm huggingface_hub python-dotenv
 ```
 
+> `requirements.txt` is a conda-format export from the original env (not pip-compatible). uv users should use `pyproject.toml` instead.
 
-### 2. Download open-source LLM [Meta-Llama-3-8B](https://huggingface.co/meta-llama/Meta-Llama-3-8B/tree/main), and Bert [bert-base-uncased](https://huggingface.co/google-bert/bert-base-uncased).
+In the rest of this README, commands are shown with the `uv run` prefix. If you're using conda, drop the `uv run` part (run with plain `python ...` inside the activated env).
 
-```
-   ├── Meta-Llama-3-8B
-   │ ├── config.json
-   │ ├── generation_config.json
-   │ ├── LICENSE
-   │ ├── model-00001-of-00004.safetensors
-   │ ├── model-00002-of-00004.safetensors
-   │ ├── model-00003-of-00004.safetensors
-   │ ├── model-00004-of-00004.safetensors
-   │ ├── model.safetensors.index.json
-   │ ├── special_tokens_map.json
-   │ ├── tokenizer.json
-   │ └── tokenizer_config.json
-```
+---
 
-```
-   ├── bert-base-uncased
-   │ ├── config.json
-   │ ├── model.safetensors
-   │ ├── tokenizer.json
-   │ ├── tokenizer_config.json
-   │ └── vocab.txt
+## HuggingFace Authentication
+
+`meta-llama/Llama-3.1-8B` is a **gated repo** — request access at
+https://huggingface.co/meta-llama/Llama-3.1-8B before downloading.
+
+Provide your HF token in one of these ways:
+
+```bash
+# Option A: .env file (recommended for project-local setup)
+cp .env.example .env
+# then edit .env and paste your token into HF_TOKEN=
+
+# Option B: HuggingFace CLI (machine-wide)
+hf auth login
 ```
 
-### 3. Prepare training and testing data
+Get a token at https://huggingface.co/settings/tokens (Read scope is enough).
 
-- Download BGL/HDFS_v1/Thunderbird dataset from [here](https://github.com/logpai/loghub). Download Liberty dataset
-  from [here](http://0b4af6cdc2f0c5998459-c0245c5c937c5dedcca3f1764ecc9b2f.r43.cf2.rackcdn.com/hpc4/liberty2.gz).
-- For **BGL**, **Thunderbird** and **Liberty**, set the following variations in **sliding_window.py** under *
-  *prepareData**
-  directory:
-   ```
-   data_dir =  # i.e. r'/mnt/public/gw/SyslogData/BGL'
-   log_name =  # i.e. 'BGL.log'
-   ```
+---
 
-  For  **Liberty**, you should activate
+## Download Base Models
+
+You need BERT + a Llama-3.x-8B model (~16 GB total). Use the helper script:
+
+```bash
+uv run python scripts/download_models.py
+```
+
+This downloads to `models/`:
+- `google-bert/bert-base-uncased` → `models/bert-base-uncased`
+- `meta-llama/Llama-3.1-8B` → `models/Llama-3.1-8B`
+
+Optional flags:
+
+| Flag | Description |
+|---|---|
+| `--bert <repo>` | Override BERT repo (default: `google-bert/bert-base-uncased`) |
+| `--llama <repo>` | Override Llama repo (default: `meta-llama/Llama-3.1-8B`) |
+| `--skip-bert` | Skip BERT download |
+| `--skip-llama` | Skip Llama download |
+
+To use the original Llama-3-8B from the paper (also gated):
+```bash
+uv run python scripts/download_models.py --llama meta-llama/Meta-Llama-3-8B
+```
+
+If you change the Llama repo, also update `Llama_path` in `train.py` and `eval.py` to match the new folder name.
+
+---
+
+## Prepare Data
+
+### BGL — automated
+
+```bash
+# Download & extract BGL.log into ./data/
+uv run python scripts/download_bgl.py
+
+# Generate train.csv / test.csv via fixed-size sessions
+uv run python -m prepareData.sliding_window
+```
+
+To train on only a slice of the log (faster experiments), set `start_line` / `end_line` in [prepareData/sliding_window.py](prepareData/sliding_window.py) before running step 2.
+
+### Thunderbird / Liberty — manual
+
+- Get the raw log file from [logpai/loghub](https://github.com/logpai/loghub) (Liberty: [Rackspace HPC4 mirror](http://0b4af6cdc2f0c5998459-c0245c5c937c5dedcca3f1764ecc9b2f.r43.cf2.rackcdn.com/hpc4/liberty2.gz)).
+- Edit `data_dir`, `log_name` in [prepareData/sliding_window.py](prepareData/sliding_window.py):
+  ```python
+  data_dir = './data'
+  log_name = 'Thunderbird.log'   # or 'liberty.log'
   ```
-  start_line = 40000000
-  end_line = 45000000
-  ```
+- For **Liberty**, activate `start_line = 40000000`, `end_line = 45000000`.
+- For **Thunderbird**, activate `start_line = 160000000`, `end_line = 170000000`.
+- Run from project root: `uv run python -m prepareData.sliding_window`.
 
-  For  **Thunderbird**, you should activate
-  ```
-  start_line = 160000000
-  end_line = 170000000
-  ```
+> Author-provided test sets:
+> [BGL test](https://drive.google.com/file/d/1aMKzhrLklnk5RX78UBc3Zx3voIIGnQzo/view) ·
+> [Liberty test](https://drive.google.com/file/d/1-Z2FrsRSm8ojfOW1555obNyU6B_aRDTH/view)
 
-  Run ```python prepareData.sliding_window.py```  from the root directory to generate training and testing data.
-  Training and testing data will be saved in {data_dir}.
+### HDFS
 
-- For **HDFS**, set the following directories in **session_window.py** under **prepareData**
-  directory:
-   ```
-   data_dir =  # i.e. r'/mnt/public/gw/SyslogData/HDFS_v1'
-   log_name =  # i.e. 'HDFS.log'
-   ```
-  Run ```python prepareData.session_window.py```  from the root directory to generate training and testing data.
-  Training and testing data will be saved in {data_dir}
+The original `session_window.py` script has been removed in this fork (focused on BGL). To process HDFS, restore it from upstream history.
 
-### 4. Train our proposed deep model. This step can be skipped by directly using our fine-tuned model (ft_model_[dataset_name])
+---
 
-- Set the following variations in **train.py**
-   ```
-   Bert_path = # i.e., r"/mnt/public/gw/LLM_model/bert-base-uncased"
-   Llama_path = # i.e., r"/mnt/public/gw/LLM_model/Meta-Llama-3-8B"
-   dataset_name = # i.e., 'Liberty'
-   data_path =  # i.e., r'/mnt/public/gw/SyslogData/{dataset_name}/train.csv'.format(dataset_name)
-   ```
-- Run ```python train.py``` from the root directory to get fine-tuned model.
+## Train
 
-### 5. Evaluate on test dataset.
+Paths in [train.py](train.py) are pre-configured for this fork's layout:
+```python
+dataset_name = 'BGL'                          # or 'Thunderbird', 'Liberty'
+data_path    = './data/train.csv'
+Bert_path    = './models/bert-base-uncased'
+Llama_path   = './models/Llama-3.1-8B'        # match what you downloaded
+```
 
-- Set the following variations in **eval.py**
-   ```
-   Bert_path = # i.e., r"/mnt/public/gw/LLM_model/bert-base-uncased"
-   Llama_path = # i.e., r"/mnt/public/gw/LLM_model/Meta-Llama-3-8B"
-   dataset_name = # i.e., 'Liberty'
-   data_path =  # i.e., r'/mnt/public/gw/SyslogData/{dataset_name}/test.csv'.format(dataset_name)
-   ```
-- We have provided the test file for the BGL and Liberty dataset, which can be accessed
-  at [here (BGL test file)](https://drive.google.com/file/d/1aMKzhrLklnk5RX78UBc3Zx3voIIGnQzo/view?usp=sharing), and [here (Liberty test file)](https://drive.google.com/file/d/1-Z2FrsRSm8ojfOW1555obNyU6B_aRDTH/view?usp=sharing)
-- Run ```python eval.py``` from the root directory. 
+Then:
+```bash
+uv run python train.py
+```
+
+The fine-tuned LoRA adapters + Bert weights + projector are saved to `ft_model_<dataset_name>/`.
+
+> Training has 4 phases: train Llama → train projector → train projector + Bert → fine-tune everything. Adjust epoch counts at the top of `train.py` if needed.
+
+### Run in background with tmux (recommended for long runs)
+
+Training takes hours — run it inside a `tmux` session so it survives SSH disconnects.
+
+```bash
+# 1. Create a tmux session named "train"
+tmux new -s train
+
+# 2. Inside tmux, run training (capture logs to a file too)
+uv run python train.py 2>&1 | tee train.log
+
+# 3. Detach without stopping: press  Ctrl+b  then  d
+#    (training keeps running in the background)
+
+# 4. Re-attach later
+tmux attach -t train
+
+# 5. List sessions
+tmux ls
+
+# 6. Kill the session when done
+tmux kill-session -t train
+```
+
+Useful tmux keybindings (all start with the prefix `Ctrl+b`):
+
+| Keys | Action |
+|---|---|
+| `Ctrl+b` `d` | Detach (keep session running) |
+| `Ctrl+b` `%` | Split pane vertically |
+| `Ctrl+b` `"` | Split pane horizontally |
+| `Ctrl+b` `←/→/↑/↓` | Move between panes |
+| `Ctrl+b` `[` | Scroll mode (press `q` to exit) |
+
+Tip: in a second pane, monitor GPU usage live:
+```bash
+watch -n 2 nvidia-smi
+```
+
+---
+
+## Evaluate
+
+Make sure `Llama_path` in [eval.py](eval.py) matches the **base model used for training** — adapters are tied to a specific base.
+
+```bash
+uv run python eval.py
+```
+
+Prints precision / recall / F1 / accuracy on the test set.
+
+> The repo ships with the authors' pre-trained adapters in `ft_model_<dataset_name>/`. These were trained on `meta-llama/Meta-Llama-3-8B` — to reproduce the paper numbers, download that base model (not 3.1) and skip the Train step.
