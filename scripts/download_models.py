@@ -1,11 +1,11 @@
 """Download base models needed for LogLLM training.
 
-Defaults:
+Defaults (matching the paper):
     - google-bert/bert-base-uncased   -> models/bert-base-uncased   (~440 MB)
-    - meta-llama/Llama-3.1-8B         -> models/Llama-3.1-8B        (~16 GB, gated)
+    - meta-llama/Meta-Llama-3-8B      -> models/Meta-Llama-3-8B     (~16 GB, gated)
 
-Llama-3.1-8B is a gated repo. You must:
-    1. Request access at https://huggingface.co/meta-llama/Llama-3.1-8B
+Meta-Llama-3-8B is a gated repo. You must:
+    1. Request access at https://huggingface.co/meta-llama/Meta-Llama-3-8B
     2. Provide your HF token in ONE of these ways (in order of priority):
        a. `HF_TOKEN` in a `.env` file at repo root  (copy from .env.example)
        b. `HF_TOKEN` exported as an env var
@@ -31,7 +31,7 @@ load_dotenv(ROOT / ".env")
 HF_TOKEN = os.getenv("HF_TOKEN")
 
 DEFAULT_BERT = "google-bert/bert-base-uncased"
-DEFAULT_LLAMA = "meta-llama/Llama-3.1-8B"
+DEFAULT_LLAMA = "meta-llama/Meta-Llama-3-8B"
 
 
 def folder_has_files(path: Path) -> bool:

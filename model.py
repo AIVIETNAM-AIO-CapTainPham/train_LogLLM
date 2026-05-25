@@ -99,7 +99,7 @@ class LogLLM(nn.Module):
         self.Bert_model = BertModel.from_pretrained(Bert_path, quantization_config=bnb_config, low_cpu_mem_usage=True,
                                                device_map=device)
 
-        self.projector = nn.Linear(self.Bert_model.config.hidden_size, self.Llama_model.config.hidden_size, device=device, dtype=torch.bfloat16)
+        self.projector = nn.Linear(self.Bert_model.config.hidden_size, self.Llama_model.config.hidden_size, device=device)
         # self.projector = nn.Linear(self.Bert_model.config.hidden_size, self.Llama_model.config.hidden_size).half().to(device)
 
         self.instruc_tokens = self.Llama_tokenizer(
@@ -206,9 +206,9 @@ class LogLLM(nn.Module):
 
 
         outputs = self.Bert_model(**inputs).pooler_output  # dim = 768
-        outputs = outputs.bfloat16()
+        outputs = outputs.float()
         outputs = self.projector(outputs)
-        outputs = outputs.bfloat16()
+        outputs = outputs.half()
 
         seq_embeddings = torch.tensor_split(outputs, seq_positions)
 
@@ -263,9 +263,9 @@ class LogLLM(nn.Module):
         batch_size = len(seq_positions) + 1
 
         outputs = self.Bert_model(**inputs).pooler_output  # dim = 768
-        outputs = outputs.bfloat16()
+        outputs = outputs.float()
         outputs = self.projector(outputs)
-        outputs = outputs.bfloat16()
+        outputs = outputs.half()
 
         seq_embeddings = torch.tensor_split(outputs, seq_positions)
 

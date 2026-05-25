@@ -16,7 +16,7 @@ dataset_name = 'BGL'   # 'Thunderbird' 'HDFS_v1'  'BGL'  'Liberty‘
 data_path = r'./data/test.csv'
 
 Bert_path = r"./models/bert-base-uncased"
-Llama_path = r"./models/Llama-3.1-8B"
+Llama_path = r"./models/Meta-Llama-3-8B"
 
 ROOT_DIR = Path(__file__).parent
 ft_path = os.path.join(ROOT_DIR, r"ft_model_{}".format(dataset_name))

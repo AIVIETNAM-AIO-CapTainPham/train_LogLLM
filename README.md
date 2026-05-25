@@ -76,8 +76,8 @@ In the rest of this README, commands are shown with the `uv run` prefix. If you'
 
 ## HuggingFace Authentication
 
-`meta-llama/Llama-3.1-8B` is a **gated repo** — request access at
-https://huggingface.co/meta-llama/Llama-3.1-8B before downloading.
+`meta-llama/Meta-Llama-3-8B` is a **gated repo** — request access at
+https://huggingface.co/meta-llama/Meta-Llama-3-8B before downloading.
 
 Provide your HF token in one of these ways:
 
@@ -96,7 +96,7 @@ Get a token at https://huggingface.co/settings/tokens (Read scope is enough).
 
 ## Download Base Models
 
-You need BERT + a Llama-3.x-8B model (~16 GB total). Use the helper script:
+You need BERT + Meta-Llama-3-8B (~16 GB total — matches the paper). Use the helper script:
 
 ```bash
 uv run python scripts/download_models.py
@@ -104,21 +104,16 @@ uv run python scripts/download_models.py
 
 This downloads to `models/`:
 - `google-bert/bert-base-uncased` → `models/bert-base-uncased`
-- `meta-llama/Llama-3.1-8B` → `models/Llama-3.1-8B`
+- `meta-llama/Meta-Llama-3-8B` → `models/Meta-Llama-3-8B`
 
 Optional flags:
 
 | Flag | Description |
 |---|---|
 | `--bert <repo>` | Override BERT repo (default: `google-bert/bert-base-uncased`) |
-| `--llama <repo>` | Override Llama repo (default: `meta-llama/Llama-3.1-8B`) |
+| `--llama <repo>` | Override Llama repo (default: `meta-llama/Meta-Llama-3-8B`) |
 | `--skip-bert` | Skip BERT download |
 | `--skip-llama` | Skip Llama download |
-
-To use the original Llama-3-8B from the paper (also gated):
-```bash
-uv run python scripts/download_models.py --llama meta-llama/Meta-Llama-3-8B
-```
 
 If you change the Llama repo, also update `Llama_path` in `train.py` and `eval.py` to match the new folder name.
 
@@ -167,7 +162,7 @@ Paths in [train.py](train.py) are pre-configured for this fork's layout:
 dataset_name = 'BGL'                          # or 'Thunderbird', 'Liberty'
 data_path    = './data/train.csv'
 Bert_path    = './models/bert-base-uncased'
-Llama_path   = './models/Llama-3.1-8B'        # match what you downloaded
+Llama_path   = './models/Meta-Llama-3-8B'     # match what you downloaded
 ```
 
 Then:

@@ -16,7 +16,7 @@ n_epochs_2_2 = 1
 n_epochs_3 = 2
 dataset_name = 'BGL'  # 'Thunderbird' 'HDFS_v1' 'BGL'   'Liberty'
 batch_size = 16
-micro_batch_size = 8
+micro_batch_size = 4
 gradient_accumulation_steps = batch_size // micro_batch_size
 
 
@@ -32,7 +32,7 @@ data_path = r'./data/train.csv'
 min_less_portion = 0.3
 
 Bert_path = r"./models/bert-base-uncased"
-Llama_path = r"./models/Llama-3.1-8B"
+Llama_path = r"./models/Meta-Llama-3-8B"
 
 ROOT_DIR = Path(__file__).parent
 ft_path = os.path.join(ROOT_DIR, r"ft_model_{}".format(dataset_name))
