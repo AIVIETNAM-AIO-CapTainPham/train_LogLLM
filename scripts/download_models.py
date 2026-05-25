@@ -29,6 +29,8 @@ MODELS_DIR = ROOT / "models"
 
 load_dotenv(ROOT / ".env")
 HF_TOKEN = os.getenv("HF_TOKEN")
+if HF_TOKEN:
+    HF_TOKEN = HF_TOKEN.strip()
 
 DEFAULT_BERT = "google-bert/bert-base-uncased"
 DEFAULT_LLAMA = "meta-llama/Meta-Llama-3-8B"
