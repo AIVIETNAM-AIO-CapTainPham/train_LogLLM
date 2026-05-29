@@ -1,57 +1,62 @@
-# LogLLM Demo App
+# Log Anomaly Demo (Streamlit, 2 mode)
 
-Streamlit UI để demo phân loại log **normal / anomalous** bằng LogLLM, chạy trên
-**dữ liệu chưa từng được train**.
+Demo phát hiện log bất thường trên **dữ liệu held-out BGL (dòng 1.5M+)** — vùng
+**cả 2 model đều chưa train**, có sẵn ground truth để so sánh.
 
-## Vì sao dùng dòng 1.5M+?
+| Mode | Model | Cách chia data | Nguồn |
+|------|-------|----------------|-------|
+| **Mode 1** | LogLLM (BERT + Llama-3-8B) | 100 dòng / session | `heldout_sessions.csv` |
+| **Mode 2** | XGBoost / CatBoost | sliding time-window 5 phút | `heldout_boosting.parquet` |
 
-Pipeline train (`prepareData/sliding_window.py`) chỉ structure dòng `0 → 1,500,000`
-của `BGL.log`, rồi split 80/20 thành `train.csv` / `test.csv`. Do đó **từ dòng
-1,500,000 trở đi (~3.25M dòng) là hoàn toàn unseen**. BGL có sẵn ground truth
-(cột `Label`: `-` = normal, còn lại = anomalous), nên demo so sánh được prediction
-với GT thật.
+Vì sao dòng 1.5M+: pipeline train (cả LogLLM lẫn boosting) chỉ dùng dòng
+`0–1,500,000`. Từ 1.5M trở đi là unseen hoàn toàn.
 
-## Cài đặt
+## Cài đặt (uv)
 
 ```bash
-# trong thư mục LogLLM/
-uv sync          # cài thêm streamlit (đã thêm vào pyproject.toml)
+uv sync
 ```
 
-## Bước 1 — Tạo dữ liệu held-out (chạy 1 lần)
+## Chuẩn bị data (chạy 1 lần mỗi mode)
 
 ```bash
+# Mode 1 — LogLLM: gom held-out thành session 100 dòng
 uv run python demo_app/prepare_heldout.py
+
+# Mode 2 — Boosting: regen template train + Brain-parse toàn bộ held-out 1.5M+
+uv run python demo_app/boosting/prepare_boosting.py
 ```
 
-Sinh ra `demo_app/heldout_sessions.csv` (cùng định dạng `test.csv`: cột
-`Content`, `Label`, `item_Label`, `session_length`). Có thể chỉnh `START_LINE` /
-`END_LINE` trong script nếu muốn vùng khác.
+> Mode 2 map mỗi dòng held-out về đúng 227 template train **theo text template**
+> (Brain đánh EventId khác nhau giữa các corpus nên không map theo EventId được).
+> Coverage ~62% trên toàn bộ 1.5M+ (drift theo thời gian); dòng không khớp → bỏ
+> qua (EventIdx = -1), giống cách NB4 xử lý EventId lạ.
 
-## Bước 2 — Chạy app
+## Chạy app
 
 ```bash
 uv run streamlit run demo_app/app.py
 ```
 
-## Tính năng
-
-- **Lấy mẫu ngẫu nhiên**: lọc theo nhãn (normal/anomalous/tất cả), chọn số lượng + seed.
-- **Chọn theo index**: nhập index cụ thể từ pool held-out.
-- Hiển thị **Accuracy / Precision / Recall / F1** trên batch đã chọn.
-- Bảng so sánh GT vs Pred (✅/❌) + xem chi tiết từng dòng log của mỗi session.
-
-## Lưu ý
-
-- Model nặng (BERT + Llama-3-8B 4-bit) → cần GPU CUDA. Model được cache bằng
-  `@st.cache_resource` nên chỉ load **1 lần**.
-- Đường dẫn model/checkpoint khớp với `eval.py`. Nếu đổi checkpoint, sửa `FT_PATH`
-  trong `inference.py`.
+Chọn mode ở sidebar.
 
 ## Cấu trúc
 
 | File | Vai trò |
 |------|---------|
-| `prepare_heldout.py` | One-time: trích sessions unseen từ `BGL.log` kèm GT |
-| `inference.py` | `load_model()` + `predict()` (tái dùng `model.py`, `customDataset.py`) |
-| `app.py` | Streamlit UI |
+| `app.py` | Streamlit UI, router 2 mode |
+| `inference.py` | Mode 1: load LogLLM + predict |
+| `prepare_heldout.py` | Mode 1: tạo `heldout_sessions.csv` |
+| `boosting/infer_boosting.py` | Mode 2: load XGB/Cat + dựng time-window + predict + metrics |
+| `boosting/prepare_boosting.py` | Mode 2: tạo `heldout_boosting.parquet` (+ regen `model/templates.csv`) |
+
+## Phụ thuộc weight (Mode 2)
+
+Đọc weight từ `train_boosting/BGL_log_error_classification/model/`:
+`xgboost_model.json`, `catboost_model.cbm`, `tfidf.joblib`,
+`template_event_ids.json`, `templates.csv`. **Cần đủ cả 5 file.**
+
+## Lưu ý
+
+- Mode 1 cần GPU CUDA (Llama-3-8B 4-bit), cache bằng `@st.cache_resource`.
+- Mode 2 chạy CPU, nhanh (~2s build window + predict cho 62k window).
