@@ -19,7 +19,8 @@ Bert_path = r"./models/bert-base-uncased"
 Llama_path = r"./models/Meta-Llama-3-8B"
 
 ROOT_DIR = Path(__file__).parent
-ft_path = os.path.join(ROOT_DIR, r"ft_model_{}".format(dataset_name))
+#ft_path = os.path.join(ROOT_DIR, r"ft_model_{}".format(dataset_name))
+ft_path = os.path.join(ROOT_DIR, r"checkpoints/ft_model_BGL_20260525_1414")
 
 device = torch.device("cuda:0")
 

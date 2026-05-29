@@ -70,7 +70,8 @@ Thumbs.db
 
 # Notebook checkpoints
 .ipynb_checkpoints/
-checkpoints/
 
 demo_app/heldout_sessions.csv
+demo_app/heldout_boosting.parquet
 demo_app/__pycache__/
+demo_app/boosting/__pycache__/

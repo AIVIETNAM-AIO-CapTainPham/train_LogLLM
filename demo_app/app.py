@@ -1,10 +1,12 @@
-"""Streamlit demo: phân loại log normal/anomalous bằng LogLLM trên dữ liệu UNSEEN.
+"""Streamlit demo phát hiện log bất thường trên dữ liệu held-out (BGL dòng 1.5M+).
 
-Chọn/sample các session từ vùng held-out (dòng 1.5M+ của BGL.log, model CHƯA train)
-rồi so sánh dự đoán của model với ground truth.
+2 MODE (cùng vùng unseen, đều có ground truth để so sánh):
+  • Mode 1 — LogLLM:   chia theo 100 dòng/session (kiểu LLM).
+  • Mode 2 — Boosting: chia theo chuỗi thời gian (sliding 5 phút), model XGBoost/CatBoost.
 
 Chuẩn bị 1 lần:
-    uv run python demo_app/prepare_heldout.py     # tạo heldout_sessions.csv
+    uv run python demo_app/prepare_heldout.py            # Mode 1: heldout_sessions.csv
+    uv run python demo_app/boosting/prepare_boosting.py  # Mode 2: heldout_boosting.parquet
 
 Chạy app:
     uv run streamlit run demo_app/app.py
@@ -13,187 +15,214 @@ Chạy app:
 import sys
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import streamlit as st
-from sklearn.metrics import (
-    accuracy_score,
-    f1_score,
-    precision_score,
-    recall_score,
-)
+from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
 
 APP_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(APP_DIR))
-from inference import SPLITER, load_model, predict  # noqa: E402
+sys.path.insert(0, str(APP_DIR / "boosting"))
+
+st.set_page_config(page_title="Log Anomaly Demo", page_icon="🪵", layout="wide")
 
 HELDOUT_CSV = APP_DIR / "heldout_sessions.csv"
+HELDOUT_PARQUET = APP_DIR / "heldout_boosting.parquet"
 
-st.set_page_config(page_title="LogLLM — Anomaly Demo", page_icon="🪵", layout="wide")
 
-
-# --------------------------------------------------------------------------- #
-# Cache: model load 1 lần duy nhất (nặng + tốn VRAM), data cache theo file.
-# --------------------------------------------------------------------------- #
+# =========================================================================== #
+# MODE 1 — LogLLM (100 dòng/session)
+# =========================================================================== #
 @st.cache_resource(show_spinner="Đang tải LogLLM (BERT + Llama-3-8B)... lần đầu lâu")
-def get_model(device: str):
+def get_llm(device: str):
+    from inference import load_model
     return load_model(device)
 
 
 @st.cache_data(show_spinner="Đang đọc held-out sessions...")
-def load_sessions(path: str) -> pd.DataFrame:
-    df = pd.read_csv(path)
-    df = df.reset_index(drop=True)
-    return df
+def load_llm_sessions(path: str) -> pd.DataFrame:
+    return pd.read_csv(path).reset_index(drop=True)
 
 
-def run_predict_batched(model, sequences, batch_size, progress=None):
-    """Chạy predict theo batch nhỏ để tránh OOM VRAM."""
-    preds = []
-    total = len(sequences)
-    for i in range(0, total, batch_size):
-        chunk = sequences[i : i + batch_size]
-        preds.extend(predict(model, chunk))
-        if progress is not None:
-            progress.progress(min((i + len(chunk)) / total, 1.0))
-    return preds
+def render_llm_mode():
+    from inference import SPLITER, predict
 
+    st.title("🪵 Mode 1 — LogLLM")
 
-# --------------------------------------------------------------------------- #
-# Sidebar
-# --------------------------------------------------------------------------- #
-st.sidebar.title("⚙️ Cấu hình")
-device = st.sidebar.text_input("Device", value="cuda:0")
-batch_size = st.sidebar.slider("Batch size (inference)", 1, 32, 8)
+    if not HELDOUT_CSV.exists():
+        st.error(
+            f"Chưa có `{HELDOUT_CSV.name}`. Chạy trước:\n\n"
+            "```bash\nuv run python demo_app/prepare_heldout.py\n```"
+        )
+        return
 
-st.sidebar.markdown("---")
-st.sidebar.caption(
-    "Dữ liệu demo lấy từ **dòng 1.5M+ của BGL.log** — phần model **chưa từng "
-    "train**, có sẵn ground truth."
-)
+    device = st.sidebar.text_input("Device", value="cuda:0")
+    batch_size = st.sidebar.slider("Batch size", 1, 32, 8)
 
-if not HELDOUT_CSV.exists():
-    st.error(
-        f"Chưa có `{HELDOUT_CSV.name}`.\n\n"
-        "Hãy chạy trước:\n\n"
-        "```bash\nuv run python demo_app/prepare_heldout.py\n```"
-    )
-    st.stop()
-
-df = load_sessions(str(HELDOUT_CSV))
-
-# --------------------------------------------------------------------------- #
-# Header + thống kê pool
-# --------------------------------------------------------------------------- #
-st.title("🪵 LogLLM — Demo phát hiện log bất thường")
-st.caption("BGL dataset · dữ liệu held-out (unseen) · so sánh prediction vs ground truth")
-
-n_total = len(df)
-n_anom = int((df["Label"] == 1).sum())
-n_norm = int((df["Label"] == 0).sum())
-c1, c2, c3 = st.columns(3)
-c1.metric("Tổng session (held-out)", f"{n_total:,}")
-c2.metric("Normal", f"{n_norm:,}")
-c3.metric("Anomalous", f"{n_anom:,}")
-
-st.markdown("---")
-
-# --------------------------------------------------------------------------- #
-# Chọn cách lấy mẫu
-# --------------------------------------------------------------------------- #
-tab_sample, tab_index = st.tabs(["🎲 Lấy mẫu ngẫu nhiên", "🔢 Chọn theo index"])
-
-selected = None
-
-with tab_sample:
-    colf = st.columns(3)
-    label_filter = colf[0].selectbox("Lọc theo nhãn", ["Tất cả", "Chỉ normal", "Chỉ anomalous"])
-    n_samples = colf[1].number_input("Số session", min_value=1, max_value=200, value=10, step=1)
-    seed = colf[2].number_input("Random seed", min_value=0, value=42, step=1)
-
-    if st.button("🎲 Lấy mẫu & dự đoán", type="primary"):
-        pool = df
-        if label_filter == "Chỉ normal":
-            pool = df[df["Label"] == 0]
-        elif label_filter == "Chỉ anomalous":
-            pool = df[df["Label"] == 1]
-        if len(pool) == 0:
-            st.warning("Không có session nào khớp bộ lọc.")
-        else:
-            selected = pool.sample(n=min(n_samples, len(pool)), random_state=int(seed))
-
-with tab_index:
-    idx_text = st.text_input(
-        "Nhập các index (cách nhau bởi dấu phẩy)",
-        placeholder="vd: 0, 5, 123, 4567",
-    )
-    if st.button("🔢 Dự đoán theo index", type="primary"):
-        try:
-            idxs = [int(x.strip()) for x in idx_text.split(",") if x.strip() != ""]
-            idxs = [i for i in idxs if 0 <= i < n_total]
-            if not idxs:
-                st.warning("Không có index hợp lệ.")
-            else:
-                selected = df.loc[idxs]
-        except ValueError:
-            st.error("Index không hợp lệ — chỉ nhập số nguyên cách nhau bởi dấu phẩy.")
-
-
-# --------------------------------------------------------------------------- #
-# Chạy dự đoán + hiển thị
-# --------------------------------------------------------------------------- #
-if selected is not None and len(selected) > 0:
-    model = get_model(device)
-
-    sequences = [str(c).split(SPLITER) for c in selected["Content"].tolist()]
-    gts = ["anomalous" if lbl == 1 else "normal" for lbl in selected["Label"].tolist()]
-
-    prog = st.progress(0.0, text="Đang dự đoán...")
-    preds = run_predict_batched(model, sequences, batch_size, prog)
-    prog.empty()
-
-    # Metrics
-    y_true = [1 if g == "anomalous" else 0 for g in gts]
-    y_pred = [1 if p == "anomalous" else 0 for p in preds]
-    acc = accuracy_score(y_true, y_pred)
-    has_pos = any(y_true) or any(y_pred)
-    prec = precision_score(y_true, y_pred, pos_label=1, zero_division=0) if has_pos else 0.0
-    rec = recall_score(y_true, y_pred, pos_label=1, zero_division=0) if has_pos else 0.0
-    f1 = f1_score(y_true, y_pred, pos_label=1, zero_division=0) if has_pos else 0.0
-    n_correct = sum(int(p == g) for p, g in zip(preds, gts))
-
-    st.subheader(f"📊 Kết quả ({n_correct}/{len(preds)} đúng)")
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Accuracy", f"{acc:.3f}")
-    m2.metric("Precision", f"{prec:.3f}")
-    m3.metric("Recall", f"{rec:.3f}")
-    m4.metric("F1", f"{f1:.3f}")
-
+    df = load_llm_sessions(str(HELDOUT_CSV))
+    n_total, n_anom, n_norm = len(df), int((df.Label == 1).sum()), int((df.Label == 0).sum())
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Tổng session", f"{n_total:,}")
+    c2.metric("Normal", f"{n_norm:,}")
+    c3.metric("Anomalous", f"{n_anom:,}")
     st.markdown("---")
 
-    # Bảng tổng hợp
-    rows = []
-    for idx, gt, pred in zip(selected.index.tolist(), gts, preds):
-        rows.append(
-            {
-                "index": idx,
-                "ground_truth": gt,
-                "prediction": pred,
-                "match": "✅" if pred == gt else "❌",
-            }
-        )
-    result_df = pd.DataFrame(rows)
-    st.dataframe(result_df, use_container_width=True, hide_index=True)
+    tab_sample, tab_index = st.tabs(["🎲 Lấy mẫu ngẫu nhiên", "🔢 Chọn theo index"])
+    selected = None
+    with tab_sample:
+        col = st.columns(3)
+        label_filter = col[0].selectbox("Lọc nhãn", ["Tất cả", "Chỉ normal", "Chỉ anomalous"])
+        n_samples = col[1].number_input("Số session", 1, 200, 10)
+        seed = col[2].number_input("Seed", 0, value=42)
+        if st.button("🎲 Lấy mẫu & dự đoán", type="primary"):
+            pool = df
+            if label_filter == "Chỉ normal":
+                pool = df[df.Label == 0]
+            elif label_filter == "Chỉ anomalous":
+                pool = df[df.Label == 1]
+            if len(pool) == 0:
+                st.warning("Không có session khớp bộ lọc.")
+            else:
+                selected = pool.sample(n=min(n_samples, len(pool)), random_state=int(seed))
+    with tab_index:
+        idx_text = st.text_input("Index (cách nhau dấu phẩy)", placeholder="vd: 0, 5, 123")
+        if st.button("🔢 Dự đoán theo index", type="primary"):
+            try:
+                idxs = [int(x) for x in idx_text.split(",") if x.strip()]
+                idxs = [i for i in idxs if 0 <= i < n_total]
+                selected = df.loc[idxs] if idxs else None
+                if not idxs:
+                    st.warning("Không có index hợp lệ.")
+            except ValueError:
+                st.error("Index không hợp lệ.")
 
-    # Chi tiết từng session
+    if selected is None or len(selected) == 0:
+        st.info("👆 Chọn cách lấy mẫu rồi bấm nút để dự đoán.")
+        return
+
+    model = get_llm(device)
+    sequences = [str(c).split(SPLITER) for c in selected["Content"].tolist()]
+    gts = ["anomalous" if v == 1 else "normal" for v in selected["Label"].tolist()]
+
+    prog = st.progress(0.0, text="Đang dự đoán...")
+    preds = []
+    for i in range(0, len(sequences), batch_size):
+        preds.extend(predict(model, sequences[i : i + batch_size]))
+        prog.progress(min((i + batch_size) / len(sequences), 1.0))
+    prog.empty()
+
+    y_true = [1 if g == "anomalous" else 0 for g in gts]
+    y_pred = [1 if p == "anomalous" else 0 for p in preds]
+    _show_metrics(y_true, y_pred)
+
+    rows = [
+        {"index": i, "ground_truth": g, "prediction": p, "match": "✅" if p == g else "❌"}
+        for i, g, p in zip(selected.index, gts, preds)
+    ]
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
     st.subheader("🔍 Chi tiết session")
-    for idx, seq, gt, pred in zip(selected.index.tolist(), sequences, gts, preds):
-        ok = pred == gt
-        icon = "✅" if ok else "❌"
-        gt_badge = "🔴" if gt == "anomalous" else "🟢"
-        pr_badge = "🔴" if pred == "anomalous" else ("🟢" if pred == "normal" else "⚪")
-        with st.expander(
-            f"{icon} #{idx} · GT {gt_badge} {gt} · Pred {pr_badge} {pred} · {len(seq)} dòng"
-        ):
+    for i, seq, g, p in zip(selected.index, sequences, gts, preds):
+        icon = "✅" if p == g else "❌"
+        gb = "🔴" if g == "anomalous" else "🟢"
+        pb = "🔴" if p == "anomalous" else ("🟢" if p == "normal" else "⚪")
+        with st.expander(f"{icon} #{i} · GT {gb} {g} · Pred {pb} {p} · {len(seq)} dòng"):
             st.code("\n".join(seq), language="text")
+
+
+# =========================================================================== #
+# MODE 2 — Boosting (chuỗi thời gian)
+# =========================================================================== #
+@st.cache_resource(show_spinner="Đang tải XGBoost + CatBoost...")
+def get_boosting():
+    import infer_boosting as ib
+    return ib.load_artifacts()
+
+
+@st.cache_data(show_spinner="Đang chia chuỗi thời gian...")
+def build_time_windows_cached(path: str, n_templates: int, win: int, step: int):
+    import infer_boosting as ib
+    df = ib.load_heldout()
+    X, y, meta = ib.build_time_windows(df, n_templates, win, step)
+    return X, y, meta
+
+
+def render_boosting_mode():
+    import infer_boosting as ib
+
+    st.title("📊 Mode 2 — Boosting")
+
+    if not HELDOUT_PARQUET.exists():
+        st.error(
+            f"Chưa có `{HELDOUT_PARQUET.name}`. Chạy trước:\n\n"
+            "```bash\nuv run python demo_app/boosting/prepare_boosting.py\n```"
+        )
+        return
+
+    model_name = st.selectbox(
+        "Model", ["xgb", "cat"],
+        format_func=lambda k: {"xgb": "XGBoost", "cat": "CatBoost"}[k],
+    )
+
+    # session_state: kết quả không biến mất khi tick checkbox (st.button chỉ True 1 lần).
+    if st.button("📊 Đánh giá toàn bộ held-out", type="primary"):
+        st.session_state["boost_evaluated"] = True
+    if not st.session_state.get("boost_evaluated"):
+        st.info("👆 Bấm nút để infer toàn bộ held-out (dòng 1.5M → hết) theo window 5 phút.")
+        return
+
+    WIN, STEP, THR = 5, 1, 0.5
+    art = get_boosting()
+    X, y, meta = build_time_windows_cached(str(HELDOUT_PARQUET), art["n_templates"], WIN, STEP)
+    prob = ib.predict(art, model_name, X)
+    pred = (prob >= THR).astype(int)
+    res = ib.evaluate(y, prob, THR)
+    name = {"xgb": "XGBoost", "cat": "CatBoost"}[model_name]
+    n_wrong = int((pred != y).sum())
+
+    st.subheader(f"📈 Kết quả — {name}")
+    cols = st.columns(5)
+    cols[0].metric("Accuracy", f"{res['accuracy']:.3f}")
+    cols[1].metric("Precision", f"{res['precision']:.3f}")
+    cols[2].metric("Recall", f"{res['recall']:.3f}")
+    cols[3].metric("F1", f"{res['f1']:.3f}")
+    cols[4].metric("Window đoán sai", f"{n_wrong:,}/{len(y):,}")
+
+    tbl = meta.copy()
+    tbl.insert(0, "window", range(len(tbl)))
+    tbl["Sự thật"] = np.where(y == 1, "🔴 anomaly", "🟢 normal")
+    tbl["Model đoán"] = np.where(pred == 1, "🔴 anomaly", "🟢 normal")
+    tbl["Xác suất"] = prob.round(3)
+    tbl["Kết quả"] = np.where(pred == y, "✅ đúng", "❌ SAI")
+    tbl = tbl.rename(columns={"window_start": "Bắt đầu", "window_end": "Kết thúc", "num_logs": "Số log"})
+
+    only_wrong = st.checkbox(f"🔴 Chỉ xem các window đoán SAI ({n_wrong:,})", value=False)
+    view = tbl[tbl["Kết quả"] == "❌ SAI"] if only_wrong else tbl
+    st.dataframe(view, use_container_width=True, hide_index=True, height=420)
+
+
+# =========================================================================== #
+# Helpers + Router
+# =========================================================================== #
+def _show_metrics(y_true, y_pred):
+    n_correct = sum(int(a == b) for a, b in zip(y_true, y_pred))
+    st.subheader(f"📊 Kết quả ({n_correct}/{len(y_true)} đúng)")
+    m = st.columns(4)
+    m[0].metric("Accuracy", f"{accuracy_score(y_true, y_pred):.3f}")
+    m[1].metric("Precision", f"{precision_score(y_true, y_pred, zero_division=0):.3f}")
+    m[2].metric("Recall", f"{recall_score(y_true, y_pred, zero_division=0):.3f}")
+    m[3].metric("F1", f"{f1_score(y_true, y_pred, zero_division=0):.3f}")
+
+
+st.sidebar.title("⚙️ Demo mode")
+mode = st.sidebar.radio(
+    "Chọn mode",
+    ["Mode 1 — LogLLM", "Mode 2 — Boosting"],
+)
+st.sidebar.markdown("---")
+st.sidebar.caption("Dữ liệu: BGL.log **dòng 1.5M+** (vùng model chưa train), có ground truth.")
+
+if mode.startswith("Mode 1"):
+    render_llm_mode()
 else:
-    st.info("👈 Chọn cách lấy mẫu ở trên rồi bấm nút để chạy dự đoán.")
+    render_boosting_mode()

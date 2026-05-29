@@ -18,4 +18,10 @@ dependencies = [
     "tqdm",
     # Demo UI
     "streamlit",
+    # Boosting demo (Mode 2): infer XGBoost/CatBoost + chuẩn bị data
+    "xgboost",
+    "catboost",
+    "joblib",
+    "pyarrow",
+    "regex",
 ]
