@@ -16,4 +16,6 @@ dependencies = [
     "scikit-learn",
     "torch",
     "tqdm",
+    # Demo UI
+    "streamlit",
 ]
