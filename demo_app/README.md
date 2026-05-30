@@ -1,62 +1,130 @@
-# Log Anomaly Demo (Streamlit, 2 mode)
+# Demo phát hiện log bất thường (BGL) — 2 mode
 
-Demo phát hiện log bất thường trên **dữ liệu held-out BGL (dòng 1.5M+)** — vùng
-**cả 2 model đều chưa train**, có sẵn ground truth để so sánh.
+Ứng dụng Streamlit so sánh **2 hướng phát hiện anomaly** trên cùng tập log
+**held-out** (dòng 1.5M+ của `BGL.log` — phần model **chưa từng train**, có sẵn
+ground truth để chấm điểm):
 
-| Mode | Model | Cách chia data | Nguồn |
-|------|-------|----------------|-------|
-| **Mode 1** | LogLLM (BERT + Llama-3-8B) | 100 dòng / session | `heldout_sessions.csv` |
-| **Mode 2** | XGBoost / CatBoost | sliding time-window 5 phút | `heldout_boosting.parquet` |
+| | Mode 1 — **LogLLM** | Mode 2 — **Boosting** |
+|---|---|---|
+| Model | BERT + Llama-3-8B (LoRA) | XGBoost / CatBoost |
+| Cách chia log | **100 dòng / session** | **cửa sổ thời gian 5 phút** |
+| Đặc trưng | hiểu ngữ nghĩa câu log | TF-IDF trên 227 template (Brain) |
+| Phần cứng | cần **GPU** (4-bit) | chạy **CPU**, nhanh |
 
-Vì sao dòng 1.5M+: pipeline train (cả LogLLM lẫn boosting) chỉ dùng dòng
-`0–1,500,000`. Từ 1.5M trở đi là unseen hoàn toàn.
+> Cả 2 chỉ train trên dòng `0–1.5M` của BGL → vùng `1.5M+` là unseen, dùng để
+> demo công bằng.
 
-## Cài đặt (uv)
+---
 
-```bash
-uv sync
+## 1. Sơ đồ thư mục
+
+```
+LogLLM/                              # gốc repo
+├── data/
+│   └── BGL.log                      # log gốc 4.7M dòng (tải về, gitignored)
+├── models/                          # base model (tải về, gitignored)
+│   ├── bert-base-uncased
+│   └── Meta-Llama-3-8B              # ~16GB, gated  → chỉ Mode 1 cần
+├── checkpoints/
+│   └── ft_model_BGL_.../            # LoRA fine-tune LogLLM → Mode 1 cần
+├── train_boosting/BGL_log_error_classification/
+│   └── model/                       # WEIGHTS boosting → Mode 2 cần
+│       ├── xgboost_model.json · catboost_model.cbm
+│       ├── tfidf.joblib             # transformer đã fit (bắt buộc)
+│       ├── template_event_ids.json · templates.csv
+│       └── ...
+└── demo_app/                        # ◀ THƯ MỤC DEMO
+    ├── app.py                       # Streamlit UI — router 2 mode
+    ├── run_demo.sh                  # chạy Streamlit + mở Cloudflare tunnel
+    ├── inference.py                 # Mode 1: load LogLLM + predict()
+    ├── prepare_heldout.py           # Mode 1: sinh heldout_sessions.csv
+    ├── boosting/
+    │   ├── infer_boosting.py        # Mode 2: load XGB/Cat, chia time-window, predict
+    │   └── prepare_boosting.py      # Mode 2: sinh heldout_boosting.parquet
+    ├── heldout_sessions.csv         # (sinh ra, gitignored) dữ liệu Mode 1
+    ├── heldout_boosting.parquet     # (sinh ra, gitignored) dữ liệu Mode 2
+    └── README.md
 ```
 
-## Chuẩn bị data (chạy 1 lần mỗi mode)
+---
+
+## 2. Cài thư viện (uv)
+
+Toàn bộ phụ thuộc khai báo trong `pyproject.toml` ở gốc repo. Chỉ cần:
 
 ```bash
-# Mode 1 — LogLLM: gom held-out thành session 100 dòng
-uv run python demo_app/prepare_heldout.py
-
-# Mode 2 — Boosting: regen template train + Brain-parse toàn bộ held-out 1.5M+
-uv run python demo_app/boosting/prepare_boosting.py
+cd LogLLM
+uv sync          # tạo .venv + cài streamlit, xgboost, catboost, torch, transformers...
 ```
 
-> Mode 2 map mỗi dòng held-out về đúng 227 template train **theo text template**
-> (Brain đánh EventId khác nhau giữa các corpus nên không map theo EventId được).
-> Coverage ~62% trên toàn bộ 1.5M+ (drift theo thời gian); dòng không khớp → bỏ
-> qua (EventIdx = -1), giống cách NB4 xử lý EventId lạ.
+Mọi lệnh bên dưới chạy qua `uv run` để dùng đúng `.venv`.
 
-## Chạy app
+---
 
+## 3. Tải dữ liệu & model
+
+### 3.1. Log BGL (cả 2 mode đều cần)
+```bash
+uv run python scripts/download_bgl.py        # → data/BGL.log
+```
+
+### 3.2. Base model + checkpoint (CHỈ Mode 1 — LogLLM)
+```bash
+# cần HF_TOKEN (Llama-3-8B là gated) — xem .env.example
+uv run python scripts/download_models.py     # → models/bert-base-uncased, models/Meta-Llama-3-8B
+```
+Checkpoint LoRA (`checkpoints/ft_model_BGL_...`) đã có sẵn trong repo (branch
+`feature/train_boosting`). Mode 2 **không cần** base model — chỉ cần `train_boosting/.../model/`.
+
+### 3.3. Sinh dữ liệu demo held-out (chạy 1 lần mỗi mode)
+```bash
+# Mode 1: gom dòng 1.5M+ thành session 100 dòng
+uv run python demo_app/prepare_heldout.py            # → demo_app/heldout_sessions.csv
+
+# Mode 2: Brain-parse toàn bộ 1.5M+, map về 227 template train
+uv run python demo_app/boosting/prepare_boosting.py  # → demo_app/heldout_boosting.parquet
+```
+
+> **Mode 2 map template theo TEXT** (Brain đánh EventId khác nhau giữa các corpus).
+> Coverage ~62% trên toàn bộ held-out (template drift theo thời gian); dòng không
+> khớp → bỏ qua. Đây là giới hạn của boosting + template cố định — đúng chỗ LogLLM
+> (hiểu ngữ nghĩa) có lợi thế.
+
+---
+
+## 4. Chạy app
+
+### Cách A — kèm Cloudflare tunnel (URL public để demo)
+```bash
+bash demo_app/run_demo.sh
+```
+Script tự chọn **port trống**, chờ Streamlit sẵn sàng, rồi in dòng
+`https://....trycloudflare.com`. **Ctrl+C** để tắt cả hai. (URL random mỗi lần chạy.)
+
+### Cách B — chỉ chạy local
 ```bash
 uv run streamlit run demo_app/app.py
 ```
 
-Chọn mode ở sidebar.
+---
 
-## Cấu trúc
+## 5. Dùng app
 
-| File | Vai trò |
-|------|---------|
-| `app.py` | Streamlit UI, router 2 mode |
-| `inference.py` | Mode 1: load LogLLM + predict |
-| `prepare_heldout.py` | Mode 1: tạo `heldout_sessions.csv` |
-| `boosting/infer_boosting.py` | Mode 2: load XGB/Cat + dựng time-window + predict + metrics |
-| `boosting/prepare_boosting.py` | Mode 2: tạo `heldout_boosting.parquet` (+ regen `model/templates.csv`) |
+Chọn **mode** ở sidebar:
 
-## Phụ thuộc weight (Mode 2)
+- **Mode 1 — LogLLM**: lấy mẫu / chọn index các session 100 dòng → model dự đoán
+  normal/anomaly → bảng so vs ground truth + xem chi tiết log từng session.
+- **Mode 2 — Boosting**: chọn XGBoost/CatBoost → "Đánh giá toàn bộ held-out" →
+  metrics (Accuracy/Precision/Recall/F1) + bảng từng cửa sổ 5 phút + ô lọc "chỉ
+  xem đoán sai".
 
-Đọc weight từ `train_boosting/BGL_log_error_classification/model/`:
-`xgboost_model.json`, `catboost_model.cbm`, `tfidf.joblib`,
-`template_event_ids.json`, `templates.csv`. **Cần đủ cả 5 file.**
+---
 
-## Lưu ý
+## 6. Phụ thuộc tóm tắt
 
-- Mode 1 cần GPU CUDA (Llama-3-8B 4-bit), cache bằng `@st.cache_resource`.
-- Mode 2 chạy CPU, nhanh (~2s build window + predict cho 62k window).
+| Mode | Cần gì để chạy |
+|------|----------------|
+| 1 — LogLLM | `data/BGL.log` · `models/*` (base) · `checkpoints/ft_model_BGL_*` · GPU · `heldout_sessions.csv` |
+| 2 — Boosting | `train_boosting/.../model/*` (5 file) · `heldout_boosting.parquet` |
+
+File nặng (`BGL.log`, base models, `heldout_*`) đều **gitignored** — phải tự tải/sinh theo các bước trên.
